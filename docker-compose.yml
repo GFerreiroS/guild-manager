@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    env_file: .env
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - guild-network
+
+  redis:
+    image: redis:7-alpine
+    networks:
+      - guild-network
+
+  backend:
+    build: ./backend
+    env_file: .env
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      guild-network:
+        aliases:
+          - guild-manager-backend
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend/templates:/usr/share/nginx/html
+      - ./frontend/static:/usr/share/nginx/html/static
+    networks:
+      - guild-network
+
+volumes:
+  pg_data:
+
+networks:
+  guild-network:
+    name: guild-manager-network
+    driver: bridge
+    attachable: true

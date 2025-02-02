@@ -1,0 +1,16 @@
+# General
+.env
+node_modules/
+*.log
+
+# Go
+bin/
+vendor/
+
+# Database
+*.db
+/pg_data
+
+# Editor
+.vscode/
+.idea/
