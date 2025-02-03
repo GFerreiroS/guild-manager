@@ -1,22 +1,28 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
-	"html/template"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
+
+	"html/template"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/render"
-	_ "github.com/lib/pq"
+
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+
+	// Adjust the import path as needed.
+	"github.com/GFerreiroS/guild-manager/backend/internal/database"
 )
 
+// createMyRenderer creates an HTML renderer for Gin.
 func createMyRenderer() render.HTMLRender {
-	// Create template from string
 	tmpl := template.Must(template.New("status").Parse(`
 	<div class="space-y-2">
 		<p class="text-green-600">
@@ -27,27 +33,24 @@ func createMyRenderer() render.HTMLRender {
 		</p>
 	</div>
 	`))
-
-	// Create HTML production renderer
 	return render.HTMLProduction{Template: tmpl}
 }
 
-func setupRouter(db *sql.DB) *gin.Engine {
+// setupRouter configures the Gin router with routes and middleware.
+func setupRouter(db *gorm.DB) *gin.Engine {
 	router := gin.Default()
-
 	router.HTMLRender = createMyRenderer()
 
-	// Add database connection to context
+	// Store the underlying *sql.DB in Gin's context.
 	router.Use(func(c *gin.Context) {
-		if db != nil {
-			c.Set("db", db)
+		if sqlDB, err := db.DB(); err == nil {
+			c.Set("db", sqlDB)
 		}
 		c.Next()
 	})
 
-	// Health check endpoint
+	// Health check endpoint.
 	router.GET("/health", func(c *gin.Context) {
-		// Get database connection from context safely
 		val, exists := c.Get("db")
 		if !exists {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -58,8 +61,7 @@ func setupRouter(db *sql.DB) *gin.Engine {
 			return
 		}
 
-		// Type assertion with proper error handling
-		db, ok := val.(*sql.DB)
+		sqlDB, ok := val.(*sql.DB)
 		if !ok {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status":  "unhealthy",
@@ -69,11 +71,8 @@ func setupRouter(db *sql.DB) *gin.Engine {
 			return
 		}
 
-		// Verify database connection
-		ctx, cancel := context.WithTimeout(c, 2*time.Second)
-		defer cancel()
-
-		if err := db.PingContext(ctx); err != nil {
+		// Check database health with a timeout.
+		if err := sqlDB.Ping(); err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"status":  "unhealthy",
 				"error":   err.Error(),
@@ -88,10 +87,10 @@ func setupRouter(db *sql.DB) *gin.Engine {
 		})
 	})
 
+	// Example API endpoint.
 	router.GET("/api/guild-status", func(c *gin.Context) {
 		c.Header("HX-Reswap", "innerHTML")
 		c.Header("HX-Retarget", "#status-container")
-
 		c.HTML(http.StatusOK, "status", gin.H{
 			"OnlinePlayers": 42,
 			"LastUpdated":   time.Now().Format("15:04:05"),
@@ -101,25 +100,43 @@ func setupRouter(db *sql.DB) *gin.Engine {
 	return router
 }
 
-func main() {
-	// Database connection with retries
-	db, err := connectDBWithRetries(5, 5*time.Second)
-	if err != nil {
-		log.Fatal("Database connection failed:", err)
-	}
-	defer db.Close()
+func connectDBWithRetries(dsn string, maxRetries int, delay time.Duration) (*gorm.DB, error) {
+	var db *gorm.DB
+	var err error
 
-	// Initialize HTTP server
-	router := setupRouter(db)
+	for i := 0; i < maxRetries; i++ {
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		if err != nil {
+			log.Printf("Database connection attempt %d/%d failed: %v", i+1, maxRetries, err)
+			time.Sleep(delay)
+			continue
+		}
 
-	log.Println("Server starting on :8080")
-	if err := http.ListenAndServe(":8080", router); err != nil {
-		log.Fatal("Server failed:", err)
+		// Retrieve the underlying *sql.DB
+		sqlDB, err := db.DB()
+		if err != nil {
+			log.Printf("Error retrieving underlying *sql.DB on attempt %d/%d: %v", i+1, maxRetries, err)
+			time.Sleep(delay)
+			continue
+		}
+
+		// Ping the database to ensure the connection is ready.
+		if pingErr := sqlDB.Ping(); pingErr != nil {
+			log.Printf("Database ping attempt %d/%d failed: %v", i+1, maxRetries, pingErr)
+			time.Sleep(delay)
+			continue
+		}
+
+		log.Printf("Successfully connected to the database on attempt %d", i+1)
+		return db, nil
 	}
+
+	return nil, fmt.Errorf("could not connect to the database after %d attempts: %w", maxRetries, err)
 }
 
-func connectDBWithRetries(maxRetries int, interval time.Duration) (*sql.DB, error) {
-	connStr := fmt.Sprintf(
+func main() {
+	// Build the DSN string for PostgreSQL.
+	dsn := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		os.Getenv("POSTGRES_HOST"),
 		os.Getenv("POSTGRES_PORT"),
@@ -129,27 +146,32 @@ func connectDBWithRetries(maxRetries int, interval time.Duration) (*sql.DB, erro
 		os.Getenv("POSTGRES_SSL_MODE"),
 	)
 
-	var db *sql.DB
-	var err error
-
-	for i := 0; i < maxRetries; i++ {
-		db, err = sql.Open("postgres", connStr)
-		if err != nil {
-			log.Printf("Database initialization failed: %v", err)
-			time.Sleep(interval)
-			continue
+	// Get the maximum number of retries from the environment (default to 10 if not set).
+	maxRetries := 10
+	if s := os.Getenv("MIGRATION_MAX_RETRIES"); s != "" {
+		if v, err := strconv.Atoi(s); err == nil {
+			maxRetries = v
 		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		if err = db.PingContext(ctx); err == nil {
-			log.Println("Successfully connected to PostgreSQL")
-			return db, nil
-		}
-
-		log.Printf("Connection attempt %d/%d failed: %v", i+1, maxRetries, err)
-		time.Sleep(interval)
 	}
-	return nil, fmt.Errorf("failed to connect after %d attempts: %v", maxRetries, err)
+
+	// Use a fixed delay between retries.
+	delay := 5 * time.Second
+
+	// Attempt to connect to the database with retries.
+	db, err := connectDBWithRetries(dsn, maxRetries, delay)
+	if err != nil {
+		log.Fatal("Failed to connect to database:", err)
+	}
+
+	if os.Getenv("SEED_DATA") == "true" {
+		log.Println("🌱 Seeding test data...")
+		database.SeedTestData(db)
+	}
+
+	// Initialize and start the HTTP server.
+	router := setupRouter(db)
+	log.Println("Server starting on :8080")
+	if err := http.ListenAndServe(":8080", router); err != nil {
+		log.Fatal("Server failed:", err)
+	}
 }
