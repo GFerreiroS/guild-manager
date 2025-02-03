@@ -14,3 +14,5 @@ vendor/
 # Editor
 .vscode/
 .idea/
+
+output.css
