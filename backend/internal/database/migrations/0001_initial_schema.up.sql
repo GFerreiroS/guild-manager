@@ -24,6 +24,14 @@ CREATE TABLE guilds (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE raid_groups (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL,
+    guild_id UUID REFERENCES guilds(id) ON DELETE CASCADE,
+    schedule JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE characters (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
@@ -39,6 +47,8 @@ CREATE TABLE characters (
     user_id UUID REFERENCES users(id),
     guild_id UUID REFERENCES guilds(id) ON DELETE CASCADE,
     raid_group_id UUID,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(name, realm)
 );
 
@@ -59,22 +69,16 @@ CREATE TABLE raid_group_characters (
 
 CREATE INDEX idx_characters_guild ON characters(guild_id);
 
-CREATE TABLE raid_groups (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name VARCHAR(255) NOT NULL,
-    guild_id UUID REFERENCES guilds(id) ON DELETE CASCADE,
-    schedule JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE events (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     raid_name VARCHAR(255) NOT NULL,
     difficulty VARCHAR(50) CHECK (difficulty IN ('normal', 'heroic', 'mythic')),
     scheduled_at TIMESTAMP WITH TIME ZONE NOT NULL,
     created_by UUID REFERENCES users(id),
-    guild_id UUID REFERENCES guilds(id) ON DELETE CASCADE
+    guild_id UUID REFERENCES guilds(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
 
 CREATE TABLE confirmations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

@@ -16,9 +16,7 @@ import (
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-
 	// Adjust the import path as needed.
-	"github.com/GFerreiroS/guild-manager/backend/internal/database"
 )
 
 // createMyRenderer creates an HTML renderer for Gin.
@@ -161,11 +159,6 @@ func main() {
 	db, err := connectDBWithRetries(dsn, maxRetries, delay)
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)
-	}
-
-	if os.Getenv("SEED_DATA") == "true" {
-		log.Println("🌱 Seeding test data...")
-		database.SeedTestData(db)
 	}
 
 	// Initialize and start the HTTP server.
